@@ -5,7 +5,7 @@
 ```
 # Клонируем приложение
 git clone https://github.com/sskuban/git.deploy.server
-cd github-webhook-server
+cd git.deploy.server
 
 # Устанавливаем зависимости
 npm install
@@ -66,7 +66,7 @@ npm start
 
 # Или с использованием PM2 для production
 npm install -g pm2
-pm2 start app.js --name "webhook-server"
+pm2 start webhook-server.js --name "webhook-server"
 pm2 save
 pm2 startup
 
@@ -74,6 +74,12 @@ pm2 startup
 pm2 restart webhook-server
 # Просмотр событий
 pm2 logs webhook-server
+```
+
+## Firewall
+
+```
+sudo ufw allow 9000
 ```
 
 ## Конфигурация GitHub Webhook
