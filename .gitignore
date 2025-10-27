@@ -1,0 +1,4 @@
+.vscode/*
+repository.json
+*.prod
+*.sh

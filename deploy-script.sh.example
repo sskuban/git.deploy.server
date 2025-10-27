@@ -1,0 +1,19 @@
+#!/bin/bash
+echo "🚀 Starting deployment of $PROJECT_NAME"
+
+# Переходим в директорию проекта
+cd /path/to/your/project
+
+# Получаем последние изменения
+git pull origin main
+
+# Устанавливаем зависимости
+npm install
+
+# Собираем приложение
+npm run build
+
+# Перезапускаем сервис
+pm2 restart your-app-name
+
+echo "✅ Deployment completed"
