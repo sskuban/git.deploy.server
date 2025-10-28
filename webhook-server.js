@@ -15,6 +15,7 @@ app.use(express.json());
 app.use("/webhook", (req, res, next) => {
   console.log(`📨 Webhook received: ${req.method} ${req.path}`);
   console.log("🔑 X-Hub-Signature-256:", req.headers["x-hub-signature-256"]);
+  console.log("🔑 X-Gogs-Signature:", req.headers["x-gogs-signature"]);
   console.log("🎯 GitHub Event:", req.headers["x-github-event"]);
   next();
 });
@@ -34,14 +35,24 @@ function verifySignature(secret, signature, payload) {
   console.log("   Expected:", expectedSignature);
   console.log("   Received:", signature);
 
-  // Сравниваем подписи
-  const isValid = crypto.timingSafeEqual(
-    Buffer.from(expectedSignature),
-    Buffer.from(signature)
-  );
+  // Сравниваем длины перед сравнением
+  if (expectedSignature.length !== signature.length) {
+    console.log("   Result: ❌ Invalid (length mismatch)");
+    return false;
+  }
 
-  console.log("   Result:", isValid ? "✅ Valid" : "❌ Invalid");
-  return isValid;
+  // Сравниваем подписи
+  try {
+    const isValid = crypto.timingSafeEqual(
+      Buffer.from(expectedSignature),
+      Buffer.from(signature)
+    );
+    console.log("   Result:", isValid ? "✅ Valid" : "❌ Invalid");
+    return isValid;
+  } catch (error) {
+    console.error("   Result: ❌ Invalid (comparison error)", error.message);
+    return false;
+  }
 }
 
 // Основной webhook endpoint с ручной проверкой
@@ -64,19 +75,23 @@ app.post("/webhook/:repository", (req, res) => {
   console.log(`✅ Repository config found`);
 
   // Получаем подпись и тело запроса
-  const signature = req.headers["x-hub-signature-256"];
+  const signature =
+    req.headers["x-hub-signature-256"] ?? req.headers["x-gogs-signature"];
   const rawBody = JSON.stringify(req.body);
 
   // Проверяем подпись
-  if (!verifySignature(repoConfig.secret, signature, rawBody)) {
-    console.error("❌ Signature verification failed");
-    return res.status(401).json({
-      error: "Signature verification failed",
-      message: "X-Hub-Signature-256 does not match",
-    });
+  if (repoConfig.verify) {
+    if (!verifySignature(repoConfig.secret, signature, rawBody)) {
+      console.error("❌ Signature verification failed");
+      return res.status(401).json({
+        error: "Signature verification failed",
+        message: "X-Hub-Signature-256 or X-Gogs-Signature does not match",
+      });
+    }
+    console.log("✅ Signature verified successfully");
+  } else {
+    console.log("✅ Signature verified skipped");
   }
-
-  console.log("✅ Signature verified successfully");
 
   // Обрабатываем событие
   const event = req.headers["x-github-event"];
@@ -193,7 +208,7 @@ function logDeployment(repoName, branch, status, message) {
     message: message,
   };
 
-  const logFile = "/home/ssk/deployments.log";
+  const logFile = "./deployments.log";
 
   try {
     fs.appendFileSync(logFile, JSON.stringify(logEntry) + "\n");

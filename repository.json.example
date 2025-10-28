@@ -3,6 +3,7 @@
     "secret": "your-github-webhook-secret",
     "deployScript": "/path/to/deploy-script.sh",
     "branch": "main",
-    "projectName": "your-project-name"
+    "projectName": "your-project-name",
+    "verify": true
   }
 }
