@@ -2,7 +2,6 @@ name: Sync to GitLab
 
 on:
   push:
-    branches: [ "**" ]  # Две звездочки означают любую ветку
 
 jobs:
   sync:
@@ -18,5 +17,8 @@ jobs:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           GITLAB_REPO: ${{ secrets.GITLAB_REPO }}
         run: |
+          # Отключаем проверку SSL сертификата
+          git config --global http.sslVerify false
+          
           git remote add gitlab "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO#https://}"
           git push --mirror gitlab
