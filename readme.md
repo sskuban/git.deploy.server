@@ -1,4 +1,4 @@
-# git.deploy.server ++
+# git.deploy.server --
 
 ## Установка на сервере
 
