@@ -16,7 +16,9 @@ app.use("/webhook", (req, res, next) => {
   console.log(`📨 Webhook received: ${req.method} ${req.path}`);
   console.log("🔑 X-Hub-Signature-256:", req.headers["x-hub-signature-256"]);
   console.log("🔑 X-Gogs-Signature:", req.headers["x-gogs-signature"]);
+  console.log("🔑 X-GitLab-Token:", req.headers["x-gitlab-token"] ? "***present***" : undefined);
   console.log("🎯 GitHub Event:", req.headers["x-github-event"]);
+  console.log("🎯 GitLab Event:", req.headers["x-gitlab-event"]);
   next();
 });
 
@@ -74,32 +76,80 @@ app.post("/webhook/:repository", (req, res) => {
 
   console.log(`✅ Repository config found`);
 
-  // Получаем подпись и тело запроса
-  const signature =
-    req.headers["x-hub-signature-256"] ?? req.headers["x-gogs-signature"];
-  const rawBody = JSON.stringify(req.body);
+  // Определяем тип провайдера (GitHub/Gogs или GitLab)
+  const isGitLab = !!req.headers["x-gitlab-event"];
 
-  // Проверяем подпись
-  if (repoConfig.verify) {
-    if (!verifySignature(repoConfig.secret, signature, rawBody)) {
-      console.error("❌ Signature verification failed");
-      return res.status(401).json({
-        error: "Signature verification failed",
-        message: "X-Hub-Signature-256 or X-Gogs-Signature does not match",
-      });
+  // Проверяем подпись/токен
+  // Верификация выполняется если:
+  //   - явно указано verify: true, или
+  //   - verify не указан, но есть secret (поведение по умолчанию)
+  // Отключить верификацию можно явно указав verify: false
+  const shouldVerify = repoConfig.verify !== false && repoConfig.secret;
+
+  if (shouldVerify) {
+    if (isGitLab) {
+      // GitLab использует простой токен в заголовке x-gitlab-token
+      const gitlabToken = req.headers["x-gitlab-token"];
+      if (!gitlabToken) {
+        console.error("❌ No GitLab token provided");
+        return res.status(401).json({
+          error: "Signature verification failed",
+          message: "X-GitLab-Token is missing",
+        });
+      }
+      if (gitlabToken !== repoConfig.secret) {
+        console.error("❌ GitLab token mismatch");
+        return res.status(401).json({
+          error: "Signature verification failed",
+          message: "X-GitLab-Token does not match",
+        });
+      }
+      console.log("✅ GitLab token verified successfully");
+    } else {
+      // GitHub/Gogs использует HMAC-SHA256 подпись
+      const signature =
+        req.headers["x-hub-signature-256"] ?? req.headers["x-gogs-signature"];
+      const rawBody = JSON.stringify(req.body);
+
+      if (!verifySignature(repoConfig.secret, signature, rawBody)) {
+        console.error("❌ Signature verification failed");
+        return res.status(401).json({
+          error: "Signature verification failed",
+          message: "X-Hub-Signature-256 or X-Gogs-Signature does not match",
+        });
+      }
+      console.log("✅ Signature verified successfully");
     }
-    console.log("✅ Signature verified successfully");
   } else {
     console.log("✅ Signature verified skipped");
   }
 
   // Обрабатываем событие
-  const event = req.headers["x-github-event"];
+  const gitHubEvent = req.headers["x-github-event"];
+  const gitLabEvent = req.headers["x-gitlab-event"];
 
-  switch (event) {
+  // Определяем тип события
+  let eventType = null;
+
+  if (gitHubEvent) {
+    eventType = gitHubEvent;
+  } else if (gitLabEvent) {
+    // GitLab события: "Push Hook", "Tag Push Hook", "Merge Request Hook", etc.
+    if (gitLabEvent === "Push Hook") {
+      eventType = "push";
+    } else if (gitLabEvent === "Tag Push Hook") {
+      eventType = "tag_push";
+    } else if (gitLabEvent === "Merge Request Hook") {
+      eventType = "merge_request";
+    } else {
+      eventType = gitLabEvent.toLowerCase().replace(/\s+/g, "_");
+    }
+  }
+
+  switch (eventType) {
     case "push":
       console.log("🚀 Processing push event");
-      handlePushEvent(req.body, repoConfig);
+      handlePushEvent(req.body, repoConfig, isGitLab);
       break;
     case "ping":
       console.log("🏓 Processing ping event");
@@ -107,23 +157,38 @@ app.post("/webhook/:repository", (req, res) => {
         .status(200)
         .json({ status: "pong", message: "Webhook is working" });
     default:
-      console.log(`ℹ️  Ignoring event: ${event}`);
+      console.log(`ℹ️  Ignoring event: ${eventType}`);
+      console.log(`ℹ️  Body:`);
+      console.log(req.body);
+      console.log(`ℹ️  Header:`);
+      console.log(req.headers);
   }
 
   res.status(200).json({
     status: "success",
     message: "Webhook processed successfully",
     repository: repositoryParam,
-    event: event,
+    event: eventType,
   });
 });
 
-// Функция обработки push событий
-function handlePushEvent(payload, repoConfig) {
-  const repoName = payload.repository?.full_name || "unknown";
-  const branch = payload.ref
-    ? payload.ref.replace("refs/heads/", "")
-    : "unknown";
+// Функция обработки push событий (поддерживает GitHub и GitLab)
+function handlePushEvent(payload, repoConfig, isGitLab) {
+  let repoName, branch, commitId, commitMessage;
+
+  if (isGitLab) {
+    // GitLab payload structure
+    repoName = payload.project?.path_with_namespace || payload.project?.name || "unknown";
+    branch = payload.ref ? payload.ref.replace("refs/heads/", "") : "unknown";
+    commitId = payload.checkout_sha || payload.after || "unknown";
+    commitMessage = payload.commits?.[payload.commits.length - 1]?.message || "No message";
+  } else {
+    // GitHub/Gogs payload structure
+    repoName = payload.repository?.full_name || "unknown";
+    branch = payload.ref ? payload.ref.replace("refs/heads/", "") : "unknown";
+    commitId = payload.after || "unknown";
+    commitMessage = payload.head_commit?.message || "No message";
+  }
 
   console.log(`🎯 Repository: ${repoName}`);
   console.log(`🌿 Branch: ${branch}`);
@@ -148,8 +213,8 @@ function handlePushEvent(payload, repoConfig) {
         BRANCH: branch,
         PROJECT_NAME: repoConfig.projectName,
         DEPLOY_TIMESTAMP: Date.now().toString(),
-        COMMIT_ID: payload.after || "unknown",
-        COMMIT_MESSAGE: payload.head_commit?.message || "No message",
+        COMMIT_ID: commitId,
+        COMMIT_MESSAGE: commitMessage,
       },
     });
 
